@@ -9,17 +9,12 @@ import pandas as pd
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 import matplotlib
-matplotlib.use('Agg') # Фоновый рендеринг без GUI
+matplotlib.use('Agg') 
 import matplotlib.pyplot as plt
 
-# Настройка шрифтов для корректного отображения кириллицы
 plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial', 'Calibri', 'Segoe UI', 'sans-serif']
 plt.rcParams['axes.unicode_minus'] = False
 
-
-# ==============================================================================
-# 1. ПОТОКОВЫЙ ПАРСЕР С ЗАЩИТОЙ ОТ "ГРЯЗНЫХ" ДАННЫХ
-# ==============================================================================
 
 def parse_traffic_excel(filepath):
     """
@@ -31,8 +26,6 @@ def parse_traffic_excel(filepath):
     
     records = []
     current_section = "Неизвестный участок"
-    
-    # Универсальный regex для дат (с ведущими нулями и без: 1.10.2020, 01/10/2020 и т.д.)
     date_regex = re.compile(r"^\s*\d{1,2}[\./]\d{1,2}[\./]\d{4}\s+\d{1,2}:\d{2}(:\d{2})?\s*$")
     section_regex = re.compile(r"км\s*\d+(\+\d+)?", re.IGNORECASE)
     
@@ -40,7 +33,6 @@ def parse_traffic_excel(filepath):
         if not row:
             continue
             
-        # Поиск названия участка в первых 6 ячейках строки
         for cell in row[:6]:
             if cell is not None and isinstance(cell, str):
                 cell_s = cell.strip()
@@ -57,7 +49,6 @@ def parse_traffic_excel(filepath):
             
         first_str = str(first_val).strip()
         
-        # Парсинг даты (нативный datetime или строка)
         dt_obj = None
         if isinstance(first_val, (datetime.datetime, datetime.date)):
             dt_obj = pd.to_datetime(first_val)
@@ -94,7 +85,6 @@ def parse_traffic_excel(filepath):
         
     df = pd.DataFrame(records, columns=col_names)
     
-    # Очистка чисел: убираем неразрывные пробелы (\xa0), пробелы и запятые
     for col in col_names[2:]:
         if df[col].dtype == object:
             df[col] = (df[col].astype(str)
@@ -106,9 +96,6 @@ def parse_traffic_excel(filepath):
     return df
 
 
-# ==============================================================================
-# 2. ПОИСК АНОМАЛЬНЫХ СУТОК
-# ==============================================================================
 
 def detect_daily_anomalies(df):
     if df.empty:
@@ -124,12 +111,10 @@ def detect_daily_anomalies(df):
     
     for section, sec_df in df.groupby('road_section'):
         
-        # 1. ТЕХНИЧЕСКИЕ И РЕЖИМНЫЕ АНОМАЛИИ
         for dt_date, day_df in sec_df.groupby('date'):
             day_df = day_df.sort_values('hour')
             hours_cnt = len(day_df)
             
-            # Неполные сутки
             if hours_cnt < 24:
                 anomalies_list.append({
                     'Участок дороги': section, 'Дата': dt_date, 'Уровень': 'Критический',
@@ -139,7 +124,6 @@ def detect_daily_anomalies(df):
                     'Описание цифрами': f"В сутках сохранено лишь {hours_cnt} часов вместо 24"
                 })
                 
-            # Залипание датчика (Flatline)
             vols = day_df['vol_total'].values
             max_consec = 1
             cur_consec = 1
@@ -161,7 +145,6 @@ def detect_daily_anomalies(df):
                     'Описание цифрами': f"Значение не менялось {max_consec} часов подряд ({flat_val} авт./ч)"
                 })
                 
-            # Дисбаланс направлений (днем: 07:00-21:00)
             daytime_df = day_df[(day_df['hour'] >= 7) & (day_df['hour'] <= 21)]
             daytime_tot = daytime_df['vol_total'].sum()
             if daytime_tot > 500:
@@ -175,7 +158,6 @@ def detect_daily_anomalies(df):
                         'Описание цифрами': f"Доля прямого направления составила {dir_ratio*100:.1f}% от дневного объема"
                     })
                     
-            # Затор / срыв потока
             min_spd = daytime_df['speed_direct'].min() if len(daytime_df) > 0 else 99
             max_load = daytime_df['load_direct'].max() if len(daytime_df) > 0 else 0
             if min_spd < 35 and max_load > 60:
@@ -188,7 +170,6 @@ def detect_daily_anomalies(df):
                     'Описание цифрами': f"В {jam_h}:00 скорость упала до {min_spd} км/ч при загрузке {max_load}%"
                 })
 
-        # 2. АМПЛИТУДНЫЕ АНОМАЛИИ И ФОРМА ПРОФИЛЯ
         for (m_key, is_wknd), group_df in sec_df.groupby(['month_key', 'is_weekend']):
             norm_hourly_vol = group_df.groupby('hour')['vol_total'].median()
             
@@ -201,7 +182,6 @@ def detect_daily_anomalies(df):
             vol_mad = vol_mad if vol_mad > 0 else daily_stats['daily_vol'].std()
             vol_mad = vol_mad if (vol_mad > 0 and pd.notnull(vol_mad)) else 1.0
             
-            # Проверка формы профиля
             for dt_date, day_data in group_df.groupby('date'):
                 day_data = day_data.sort_values('hour')
                 if len(day_data) == 24 and norm_hourly_vol.std() > 0:
@@ -217,7 +197,6 @@ def detect_daily_anomalies(df):
                                 'Описание цифрами': f"Форма суточного хода нетипична (корреляция {corr:.2f} < 0.70)"
                             })
                             
-            # Проверка суточного объема
             for _, r in daily_stats.iterrows():
                 dt_date = r['date']
                 d_vol = r['daily_vol']
@@ -233,7 +212,6 @@ def detect_daily_anomalies(df):
                         'Отклонение (%)': delta_p, 'Индекс (Score)': round(abs(z_vol), 1),
                         'Описание цифрами': f"Суточный трафик {int(d_vol)} ниже нормы {int(vol_med)} на {abs(delta_p)}% (Z={z_vol:.1f})"
                     })
-                # Всплеск
                 elif (z_vol > 3.0 and delta_p >= 25.0) or delta_p >= 50.0:
                     anomalies_list.append({
                         'Участок дороги': section, 'Дата': dt_date, 'Уровень': 'Высокий',
@@ -248,10 +226,6 @@ def detect_daily_anomalies(df):
         res_df = res_df.sort_values(by=['Участок дороги', 'Дата'])
     return res_df
 
-
-# ==============================================================================
-# 3. ПОИСК АНОМАЛЬНЫХ МЕСЯЦЕВ (МАКРО YoY)
-# ==============================================================================
 
 def detect_monthly_anomalies(all_data_df):
     if all_data_df.empty:
@@ -302,7 +276,6 @@ def detect_monthly_anomalies(all_data_df):
         for _, row in group.iterrows():
             ym = row['year_month']
             
-            # Полнота данных
             if row['completeness_pct'] < 75.0:
                 monthly_anomalies.append({
                     'Участок дороги': sec, 'Период': ym, 'Уровень': 'Критический',
@@ -312,7 +285,6 @@ def detect_monthly_anomalies(all_data_df):
                     'Описание цифрами': f"Данные за месяц неполные (сохранено лишь {row['completeness_pct']}% часов)"
                 })
                 
-            # Сдвиг интенсивности (ССИ / MADT)
             delta_madt = ((row['madt'] - madt_med) / madt_med) * 100 if madt_med > 0 else 0
             if abs(delta_madt) >= 25.0:
                 lvl = 'Критический' if abs(delta_madt) >= 40.0 else 'Высокий'
@@ -324,7 +296,6 @@ def detect_monthly_anomalies(all_data_df):
                     'Описание цифрами': f"ССИ месяца ({int(row['madt'])} авт./сут) отклонилась на {delta_madt:+.1f}% от многолетней нормы ({int(madt_med)})"
                 })
                 
-            # Сдвиг доли тяжелых грузовиков
             delta_hvy = row['heavy_share'] - hvy_med
             if abs(delta_hvy) >= 8.0:
                 monthly_anomalies.append({
@@ -335,7 +306,6 @@ def detect_monthly_anomalies(all_data_df):
                     'Описание цифрами': f"Доля тяжелых грузовиков изменилась на {delta_hvy:+.1f}% п.п. (факт: {row['heavy_share']}%, норма: {hvy_med}%)"
                 })
                 
-            # Просадка скорости
             delta_spd = row['avg_speed_dir'] - spd_med
             if delta_spd <= -15.0:
                 monthly_anomalies.append({
@@ -352,9 +322,6 @@ def detect_monthly_anomalies(all_data_df):
     return res_df
 
 
-# ==============================================================================
-# 4. ПОСТРОЕНИЕ ГРАФИКОВ (БЕЗ ДУБЛИРОВАНИЯ)
-# ==============================================================================
 
 def generate_anomaly_plots(df, daily_anomalies_df, output_folder):
     os.makedirs(output_folder, exist_ok=True)
@@ -367,7 +334,6 @@ def generate_anomaly_plots(df, daily_anomalies_df, output_folder):
     df['is_weekend'] = df['timestamp'].dt.weekday.isin([5, 6]).astype(int)
     df['month_key'] = df['timestamp'].dt.to_period('M').astype(str)
     
-    # Группируем по уникальному дню (чтобы не плодить дубликаты файлов)
     grouped = daily_anomalies_df.groupby(['Участок дороги', 'Дата'])
     print(f"\nГенерация графиков (уникальных аномальных дней: {len(grouped)})...")
     
@@ -380,7 +346,6 @@ def generate_anomaly_plots(df, daily_anomalies_df, output_folder):
         m_key = day_df['month_key'].iloc[0]
         is_wknd = day_df['is_weekend'].iloc[0]
         
-        # Список всех аномалий этого дня для подзаголовка
         anom_types = "; ".join(rows['Тип аномалии'].unique())
         
         ref_df = df[(df['road_section'] == sec) & (df['month_key'] == m_key) & (df['is_weekend'] == is_wknd)]
@@ -392,7 +357,6 @@ def generate_anomaly_plots(df, daily_anomalies_df, output_folder):
         
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(11, 7), sharex=True, gridspec_kw={'height_ratios': [2, 1]})
         
-        # Панель 1: Интенсивность
         ax1.bar(hours, norm_vol, color='#BDC3C7', alpha=0.6, width=0.6, label='Норма месяца (Медиана)', edgecolor='#95A5A6')
         ax1.plot(hours, fact_vol, color='#E74C3C', linewidth=2.5, marker='o', markersize=5, label='Факт аномального дня')
         ax1.set_ylabel('Интенсивность, авт./ч', fontsize=10, fontweight='bold')
@@ -410,7 +374,6 @@ def generate_anomaly_plots(df, daily_anomalies_df, output_folder):
                          fontsize=8, fontweight='bold',
                          bbox=dict(boxstyle="round,pad=0.2", fc="#FADBD8", ec="#E74C3C", lw=1))
                          
-        # Панель 2: Скорость
         ax2.plot(hours, norm_spd, color='#7F8C8D', linestyle='--', linewidth=1.8, label='Норма скорости')
         ax2.plot(hours, fact_spd, color='#2980B9', linewidth=2.0, marker='s', markersize=4, label='Факт скорости (Прямое)')
         ax2.axhline(40, color='#C0392B', linestyle=':', alpha=0.7, label='Порог затора (40 км/ч)')
@@ -429,9 +392,6 @@ def generate_anomaly_plots(df, daily_anomalies_df, output_folder):
         plt.close(fig)
 
 
-# ==============================================================================
-# 5. ЭКСПОРТ В EXCEL
-# ==============================================================================
 
 def export_anomalies_to_excel(daily_df, monthly_df, output_path):
     with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
@@ -487,9 +447,6 @@ def export_anomalies_to_excel(daily_df, monthly_df, output_path):
     wb.save(output_path)
 
 
-# ==============================================================================
-# ТОЧКА ВХОДА
-# ==============================================================================
 
 def main():
     parser = argparse.ArgumentParser(description="Анализатор аномалий трафика (2020-2026)")
