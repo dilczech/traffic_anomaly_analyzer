@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "traffic-anomaly-analyzer"
+version = "0.1.0"
+description = "Hourly road traffic anomaly analysis"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=2.3,<3",
+    "pandas>=2.3,<3",
+    "openpyxl>=3.1,<4",
+    "matplotlib>=3.10,<4",
+]
+
+[project.scripts]
+traffic-analyzer = "traffic_analyzer.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["traffic_analyzer*"]
